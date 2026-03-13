@@ -6,9 +6,10 @@ import { dbGet, dbSet } from '../db';
 interface Props {
   url: string;
   attribution: string;
+  onTileCached?: () => void;
 }
 
-export default function OfflineTileLayer({ url, attribution }: Props) {
+export default function OfflineTileLayer({ url, attribution, onTileCached }: Props) {
   const map = useMap();
 
   useEffect(() => {
@@ -39,7 +40,9 @@ export default function OfflineTileLayer({ url, attribution }: Props) {
                 const reader = new FileReader();
                 reader.onload = () => {
                   const dataUrl = reader.result as string;
-                  dbSet(key, dataUrl).catch(() => {});
+                  dbSet(key, dataUrl).then(() => {
+                    if (onTileCached) onTileCached();
+                  }).catch(() => {});
                   tile.src = dataUrl;
                   done(null, tile);
                 };

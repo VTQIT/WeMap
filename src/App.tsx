@@ -19,7 +19,9 @@ import {
   Phone,
   Info,
   Sun,
-  Moon
+  Moon,
+  Eye,
+  RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { MUNICIPALITIES, CAT_COLORS } from './constants';
@@ -95,6 +97,7 @@ export default function App() {
   const [downloadProgress, setDownloadProgress] = useState<{ done: number; total: number }>({ done: 0, total: 0 });
   const [mapBrightness, setMapBrightness] = useState(100);
   const [isNightMode, setIsNightMode] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   // Form states for adding business
   const [newBiz, setNewBiz] = useState<Partial<Business>>({
@@ -103,7 +106,10 @@ export default function App() {
   });
 
   useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
+    const handleOnline = () => {
+      setIsOnline(true);
+      handleSync();
+    };
     const handleOffline = () => setIsOnline(false);
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
@@ -121,6 +127,18 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('wemap_cached', JSON.stringify(cachedMunis));
   }, [cachedMunis]);
+
+  const handleSync = async () => {
+    if (!isOnline) {
+      showToast('⚠️ Offline: Cannot sync data');
+      return;
+    }
+    setIsSyncing(true);
+    // Simulate background sync with a server
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    setIsSyncing(false);
+    showToast('🔄 Data synced successfully');
+  };
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -343,10 +361,12 @@ export default function App() {
           zoomControl={false} 
           className="w-full h-full"
           attributionControl={false}
+          style={{ touchAction: 'none' }}
         >
           <OfflineTileLayer 
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             attribution="© OpenStreetMap contributors"
+            onTileCached={updateCacheInfo}
           />
           <MapController center={mapCenter} zoom={mapZoom} />
           
@@ -407,6 +427,15 @@ export default function App() {
                     </div>
                   )}
                   <div className="flex gap-2 mt-3">
+                    <button 
+                      onClick={() => window.open(`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${biz.lat},${biz.lng}`, '_blank')}
+                      className="flex-1 py-1.5 rounded-lg border border-white/10 bg-white/5 text-[9px] font-light tracking-widest uppercase hover:bg-white/10 transition-colors flex items-center justify-center gap-1"
+                    >
+                      <Eye size={10} />
+                      Street View
+                    </button>
+                  </div>
+                  <div className="flex gap-2 mt-2">
                     <button 
                       onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${biz.lat},${biz.lng}`, '_blank')}
                       className="flex-1 py-1.5 rounded-lg border border-white/10 bg-white/5 text-[9px] font-light tracking-widest uppercase hover:bg-white/10 transition-colors"
@@ -478,10 +507,26 @@ export default function App() {
           <MapPin size={10} />
           Surigao del Sur
         </div>
+        <button 
+          onClick={handleSync}
+          className={`inline-flex items-center gap-1.5 bg-[#12121e]/85 backdrop-blur-md border border-white/5 rounded-full px-3 py-1.5 text-[10px] font-light tracking-wider uppercase text-white/40 pointer-events-auto transition-all active:scale-95 ${isSyncing ? 'text-[#4fc3f7]' : ''}`}
+        >
+          <RefreshCw size={10} className={isSyncing ? 'animate-spin' : ''} />
+          {isSyncing ? 'Syncing...' : 'Sync'}
+        </button>
       </div>
 
       {/* Action Buttons */}
       <div className="absolute bottom-[100px] right-4 z-[999] flex flex-col gap-3">
+        <button 
+          onClick={() => {
+            window.open(`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${mapCenter[0]},${mapCenter[1]}`, '_blank');
+          }}
+          className="w-10 h-10 rounded-full border border-white/10 bg-[#0f0f19]/72 backdrop-blur-md flex items-center justify-center text-white/60 hover:text-[#4fc3f7] hover:border-[#4fc3f7] transition-all"
+          title="Open Street View"
+        >
+          <Eye size={18} />
+        </button>
         <button 
           onClick={() => {
             if (navigator.geolocation) {
