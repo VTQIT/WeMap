@@ -1,0 +1,50 @@
+@import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
+
+:root {
+  --bg: #0a0a12;
+  --glass: rgba(15, 15, 25, 0.72);
+  --glass2: rgba(18, 18, 30, 0.85);
+  --border: rgba(255, 255, 255, 0.07);
+  --border2: rgba(255, 255, 255, 0.12);
+  --text: #ffffff;
+  --text-dim: rgba(255, 255, 255, 0.45);
+  --accent: #4fc3f7;
+  --accent2: #7c6af7;
+  --danger: #f77c7c;
+  --success: #7cf7b8;
+  --radius: 14px;
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: 'Inter', sans-serif;
+  overflow: hidden;
+}
+
+.leaflet-container {
+  background: #0a0a12;
+}
+
+.leaflet-tile-pane {
+  filter: brightness(0.38) saturate(0.5) hue-rotate(195deg) contrast(1.1);
+}
+
+/* Custom scrollbar for dark theme */
+::-webkit-scrollbar {
+  width: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}

@@ -1,0 +1,5 @@
+{
+  "name": "WeMap Surigao",
+  "description": "Offline-first community map for Surigao del Sur with real-time tile caching and business listings.",
+  "requestFramePermissions": ["geolocation"]
+}
