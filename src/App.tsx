@@ -98,6 +98,8 @@ export default function App() {
   const [mapBrightness, setMapBrightness] = useState(100);
   const [isNightMode, setIsNightMode] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [streetViewLoc, setStreetViewLoc] = useState<[number, number] | null>(null);
+  const [directionsLoc, setDirectionsLoc] = useState<[number, number] | null>(null);
 
   // Form states for adding business
   const [newBiz, setNewBiz] = useState<Partial<Business>>({
@@ -428,7 +430,7 @@ export default function App() {
                   )}
                   <div className="flex gap-2 mt-3">
                     <button 
-                      onClick={() => window.open(`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${biz.lat},${biz.lng}`, '_blank')}
+                      onClick={() => setStreetViewLoc([biz.lat, biz.lng])}
                       className="flex-1 py-1.5 rounded-lg border border-white/10 bg-white/5 text-[9px] font-light tracking-widest uppercase hover:bg-white/10 transition-colors flex items-center justify-center gap-1"
                     >
                       <Eye size={10} />
@@ -437,7 +439,7 @@ export default function App() {
                   </div>
                   <div className="flex gap-2 mt-2">
                     <button 
-                      onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${biz.lat},${biz.lng}`, '_blank')}
+                      onClick={() => setDirectionsLoc([biz.lat, biz.lng])}
                       className="flex-1 py-1.5 rounded-lg border border-white/10 bg-white/5 text-[9px] font-light tracking-widest uppercase hover:bg-white/10 transition-colors"
                     >
                       Navigate
@@ -520,7 +522,7 @@ export default function App() {
       <div className="absolute bottom-[100px] right-4 z-[999] flex flex-col gap-3">
         <button 
           onClick={() => {
-            window.open(`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${mapCenter[0]},${mapCenter[1]}`, '_blank');
+            setStreetViewLoc([mapCenter[0], mapCenter[1]]);
           }}
           className="w-10 h-10 rounded-full border border-white/10 bg-[#0f0f19]/72 backdrop-blur-md flex items-center justify-center text-white/60 hover:text-[#4fc3f7] hover:border-[#4fc3f7] transition-all"
           title="Open Street View"
@@ -573,6 +575,69 @@ export default function App() {
           </button>
         ))}
       </div>
+
+      {/* Internal Street View & Directions */}
+      <AnimatePresence>
+        {streetViewLoc && (
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="fixed inset-0 z-[5000] bg-black flex flex-col"
+          >
+            <div className="p-4 flex justify-between items-center bg-[#0f0f19] border-b border-white/5">
+              <div className="text-[11px] font-extralight tracking-[4px] uppercase text-white/40">Internal Street View</div>
+              <button onClick={() => setStreetViewLoc(null)} className="p-2 rounded-full bg-white/5 hover:bg-white/10 transition-colors"><X size={18} /></button>
+            </div>
+            <div className="flex-1 relative bg-[#0a0a12]">
+              {!isOnline && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center z-10 bg-[#0a0a12]">
+                  <AlertCircle size={48} className="text-white/20 mb-4" />
+                  <div className="text-[14px] font-light mb-2">Street View Unavailable Offline</div>
+                  <div className="text-[11px] font-extralight text-white/40">Please connect to the internet to view street-level imagery.</div>
+                </div>
+              )}
+              <iframe 
+                className="w-full h-full border-none"
+                src={`https://maps.google.com/maps?q=${streetViewLoc[0]},${streetViewLoc[1]}&layer=c&cbll=${streetViewLoc[0]},${streetViewLoc[1]}&cbp=12,0,0,0,0&output=embed`}
+                allowFullScreen
+                loading="lazy"
+                referrerPolicy="no-referrer"
+              />
+            </div>
+          </motion.div>
+        )}
+
+        {directionsLoc && (
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="fixed inset-0 z-[5000] bg-black flex flex-col"
+          >
+            <div className="p-4 flex justify-between items-center bg-[#0f0f19] border-b border-white/5">
+              <div className="text-[11px] font-extralight tracking-[4px] uppercase text-white/40">Internal Navigation</div>
+              <button onClick={() => setDirectionsLoc(null)} className="p-2 rounded-full bg-white/5 hover:bg-white/10 transition-colors"><X size={18} /></button>
+            </div>
+            <div className="flex-1 relative bg-[#0a0a12]">
+              {!isOnline && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center z-10 bg-[#0a0a12]">
+                  <AlertCircle size={48} className="text-white/20 mb-4" />
+                  <div className="text-[14px] font-light mb-2">Navigation Unavailable Offline</div>
+                  <div className="text-[11px] font-extralight text-white/40">Live directions require an internet connection.</div>
+                </div>
+              )}
+              <iframe 
+                className="w-full h-full border-none"
+                src={`https://maps.google.com/maps?saddr=My+Location&daddr=${directionsLoc[0]},${directionsLoc[1]}&output=embed`}
+                allowFullScreen
+                loading="lazy"
+                referrerPolicy="no-referrer"
+              />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Panels Overlay */}
       <AnimatePresence>
