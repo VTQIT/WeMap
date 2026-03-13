@@ -19,6 +19,12 @@ export default function OfflineTileLayer({ url, attribution }: Props) {
         tile.setAttribute('alt', '');
         tile.setAttribute('loading', 'lazy');
         
+        if (isNaN(coords.x) || isNaN(coords.y) || isNaN(coords.z)) {
+          tile.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+          done(null, tile);
+          return tile;
+        }
+
         const tileUrl = this.getTileUrl(coords);
         const key = `tile_${coords.z}_${coords.x}_${coords.y}`;
 

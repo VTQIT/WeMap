@@ -56,3 +56,34 @@ export async function dbClear(): Promise<void> {
     tx.oncomplete = () => resolve();
   });
 }
+
+export async function dbGetTotalSize(): Promise<number> {
+  const database = await openDB();
+  return new Promise((resolve) => {
+    const tx = database.transaction('tiles', 'readonly');
+    const store = tx.objectStore('tiles');
+    const req = store.openCursor();
+    let totalSize = 0;
+    req.onsuccess = (e: any) => {
+      const cursor = e.target.result;
+      if (cursor) {
+        // Approximate size of the value (data URL string)
+        totalSize += cursor.value.length;
+        cursor.continue();
+      } else {
+        resolve(totalSize);
+      }
+    };
+    req.onerror = () => resolve(0);
+  });
+}
+
+export async function dbDelete(key: string): Promise<void> {
+  const database = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = database.transaction('tiles', 'readwrite');
+    const req = tx.objectStore('tiles').delete(key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}

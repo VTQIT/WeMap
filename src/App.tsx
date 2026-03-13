@@ -17,13 +17,15 @@ import {
   ChevronRight,
   Clock,
   Phone,
-  Info
+  Info,
+  Sun,
+  Moon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { MUNICIPALITIES, CAT_COLORS } from './constants';
 import { Business, Municipality, PanelType } from './types';
 import OfflineTileLayer from './components/OfflineTileLayer';
-import { dbClear, dbCount, dbSet, dbGet } from './db';
+import { dbClear, dbCount, dbSet, dbGet, dbGetTotalSize, dbDelete } from './db';
 import { latLngToTile, getOsmTileUrl } from './utils/geo.ts';
 
 const DL_ZOOM_LEVELS = [10, 11, 12, 13, 14, 15];
@@ -42,7 +44,11 @@ L.Marker.prototype.options.icon = DefaultIcon;
 function MapController({ center, zoom }: { center: [number, number], zoom: number }) {
   const map = useMap();
   useEffect(() => {
-    map.flyTo(center, zoom, { duration: 1.5 });
+    const isValid = (c: any) => c && typeof c[0] === 'number' && !isNaN(c[0]) && typeof c[1] === 'number' && !isNaN(c[1]);
+    const isZoomValid = typeof zoom === 'number' && !isNaN(zoom);
+    if (isValid(center) && isZoomValid) {
+      map.flyTo(center, zoom, { duration: 1.5 });
+    }
   }, [center, zoom, map]);
   return null;
 }
@@ -50,8 +56,12 @@ function MapController({ center, zoom }: { center: [number, number], zoom: numbe
 export default function App() {
   const [activePanel, setActivePanel] = useState<PanelType>(null);
   const [businesses, setBusinesses] = useState<Business[]>(() => {
-    const saved = localStorage.getItem('wemap_biz');
-    if (saved) return JSON.parse(saved);
+    try {
+      const saved = localStorage.getItem('wemap_biz');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {
+      console.error('Failed to parse wemap_biz', e);
+    }
     
     // Default sample data
     return [
@@ -64,8 +74,13 @@ export default function App() {
     ];
   });
   const [cachedMunis, setCachedMunis] = useState<string[]>(() => {
-    const saved = localStorage.getItem('wemap_cached');
-    return saved ? JSON.parse(saved) : [];
+    try {
+      const saved = localStorage.getItem('wemap_cached');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      console.error('Failed to parse wemap_cached', e);
+      return [];
+    }
   });
   const [mapCenter, setMapCenter] = useState<[number, number]>([9.0281, 125.9889]);
   const [mapZoom, setMapZoom] = useState(11);
@@ -75,8 +90,11 @@ export default function App() {
   const [cacheInfo, setCacheInfo] = useState('Calculating...');
   const [currentFilter, setCurrentFilter] = useState('all');
   const [toast, setToast] = useState<string | null>(null);
+  const [selectedMuniId, setSelectedMuniId] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<{ done: number; total: number }>({ done: 0, total: 0 });
+  const [mapBrightness, setMapBrightness] = useState(100);
+  const [isNightMode, setIsNightMode] = useState(true);
 
   // Form states for adding business
   const [newBiz, setNewBiz] = useState<Partial<Business>>({
@@ -111,7 +129,9 @@ export default function App() {
 
   const updateCacheInfo = async () => {
     const count = await dbCount();
-    setCacheInfo(`~${count} tiles cached (≈${(count * 10 / 1024).toFixed(1)} MB est.)`);
+    const totalSize = await dbGetTotalSize();
+    const sizeInMB = (totalSize / (1024 * 1024)).toFixed(1);
+    setCacheInfo(`${count} tiles cached (${sizeInMB} MB total)`);
   };
 
   const handleSearch = (q: string) => {
@@ -123,11 +143,12 @@ export default function App() {
     const results: any[] = [];
     MUNICIPALITIES.forEach(m => {
       if (m.name.toLowerCase().includes(q.toLowerCase())) {
-        results.push({ type: 'Municipality', label: m.name, sub: m.province, lat: m.lat, lng: m.lng, zoom: m.zoom });
+        results.push({ type: 'Municipality', id: m.id, label: m.name, sub: m.province, lat: m.lat, lng: m.lng, zoom: m.zoom });
       }
     });
     businesses.forEach((b, i) => {
-      if (b.name.toLowerCase().includes(q.toLowerCase()) || (b.addr && b.addr.toLowerCase().includes(q.toLowerCase()))) {
+      if ((b.name.toLowerCase().includes(q.toLowerCase()) || (b.addr && b.addr.toLowerCase().includes(q.toLowerCase()))) && 
+          typeof b.lat === 'number' && !isNaN(b.lat) && typeof b.lng === 'number' && !isNaN(b.lng)) {
         results.push({ type: 'Business', label: b.name, sub: b.muniName + ' · ' + b.cat, lat: b.lat, lng: b.lng, zoom: 16, bizIdx: i });
       }
     });
@@ -135,8 +156,18 @@ export default function App() {
   };
 
   const selectResult = (r: any) => {
+    const isValid = (loc: any) => loc && typeof loc.lat === 'number' && !isNaN(loc.lat) && typeof loc.lng === 'number' && !isNaN(loc.lng);
+    if (!isValid(r)) {
+      showToast('⚠️ Invalid location data');
+      return;
+    }
     setSearchQuery(r.label);
     setSearchResults([]);
+    if (r.type === 'Municipality') {
+      setSelectedMuniId(r.id);
+    } else {
+      setSelectedMuniId(null);
+    }
     setMapCenter([r.lat, r.lng]);
     setMapZoom(r.zoom || 14);
     setActivePanel(null);
@@ -148,11 +179,16 @@ export default function App() {
       return;
     }
     const muni = MUNICIPALITIES.find(m => m.name === newBiz.muniName) || MUNICIPALITIES[0];
+    
+    // Ensure coordinates are valid numbers
+    const lat = typeof newBiz.lat === 'number' && !isNaN(newBiz.lat) ? newBiz.lat : muni.lat + (Math.random() - 0.5) * 0.02;
+    const lng = typeof newBiz.lng === 'number' && !isNaN(newBiz.lng) ? newBiz.lng : muni.lng + (Math.random() - 0.5) * 0.02;
+
     const biz: Business = {
       id: Math.random().toString(36).substr(2, 9),
       name: newBiz.name,
-      lat: newBiz.lat || muni.lat + (Math.random() - 0.5) * 0.02,
-      lng: newBiz.lng || muni.lng + (Math.random() - 0.5) * 0.02,
+      lat,
+      lng,
       cat: newBiz.cat || '📌',
       muniName: newBiz.muniName || 'Cantilan',
       phone: newBiz.phone,
@@ -180,8 +216,33 @@ export default function App() {
     showToast('🗑️ All tile cache cleared');
   };
 
+  const deleteMuniCache = async (muni: Municipality) => {
+    const bounds = muni.bounds;
+    const [s, w, n, e] = [bounds[0][0], bounds[0][1], bounds[1][0], bounds[1][1]];
+    
+    const keysToDelete: string[] = [];
+    DL_ZOOM_LEVELS.forEach(z => {
+      const [x1, y1] = latLngToTile(n, w, z);
+      const [x2, y2] = latLngToTile(s, e, z);
+      for (let x = Math.min(x1, x2); x <= Math.max(x1, x2); x++) {
+        for (let y = Math.min(y1, y2); y <= Math.max(y1, y2); y++) {
+          keysToDelete.push(`tile_${z}_${x}_${y}`);
+        }
+      }
+    });
+
+    await Promise.all(keysToDelete.map(key => dbDelete(key)));
+    setCachedMunis(prev => prev.filter(id => id !== muni.id));
+    updateCacheInfo();
+    showToast(`🗑️ ${muni.name} cache removed`);
+  };
+
   const downloadMuni = async (muni: Municipality) => {
     if (downloadingId) return;
+    if (!navigator.onLine) {
+      showToast('⚠️ Internet connection required for download');
+      return;
+    }
     
     setDownloadingId(muni.id);
     showToast(`📥 Starting download for ${muni.name}...`);
@@ -244,6 +305,13 @@ export default function App() {
     showToast(`✅ ${muni.name} ready offline`);
   };
 
+  const handleMuniClick = (m: Municipality) => {
+    setSelectedMuniId(m.id);
+    setMapCenter([m.lat, m.lng]);
+    setMapZoom(m.zoom);
+    showToast(`📍 Exploring ${m.name}`);
+  };
+
   const createBizIcon = (cat: string) => {
     const color = CAT_COLORS[cat] || '#aaa';
     return L.divIcon({
@@ -263,10 +331,15 @@ export default function App() {
   return (
     <div className="relative w-full h-screen overflow-hidden bg-[#0a0a12] text-white font-['Exo_2']">
       {/* Map */}
-      <div className="absolute inset-0 z-0">
+      <div 
+        className="absolute inset-0 z-0 transition-all duration-500"
+        style={{ 
+          filter: `${isNightMode ? 'invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%)' : ''} brightness(${mapBrightness}%)` 
+        }}
+      >
         <MapContainer 
-          center={mapCenter} 
-          zoom={mapZoom} 
+          center={(typeof mapCenter[0] === 'number' && !isNaN(mapCenter[0]) && typeof mapCenter[1] === 'number' && !isNaN(mapCenter[1])) ? mapCenter : [9.0281, 125.9889]} 
+          zoom={!isNaN(mapZoom) ? mapZoom : 11} 
           zoomControl={false} 
           className="w-full h-full"
           attributionControl={false}
@@ -277,22 +350,33 @@ export default function App() {
           />
           <MapController center={mapCenter} zoom={mapZoom} />
           
-          {MUNICIPALITIES.map(m => (
+          {MUNICIPALITIES.filter(m => 
+            m.bounds && 
+            m.bounds[0] && !isNaN(m.bounds[0][0]) && !isNaN(m.bounds[0][1]) &&
+            m.bounds[1] && !isNaN(m.bounds[1][0]) && !isNaN(m.bounds[1][1])
+          ).map(m => (
             <Rectangle 
               key={m.id}
               bounds={m.bounds}
+              eventHandlers={{
+                click: () => handleMuniClick(m)
+              }}
               pathOptions={{
                 color: m.color,
-                weight: 1,
-                opacity: 0.4,
+                weight: selectedMuniId === m.id ? 3 : 1,
+                opacity: selectedMuniId === m.id ? 0.8 : 0.4,
                 fillColor: m.color,
-                fillOpacity: 0.04,
-                dashArray: '4 6'
+                fillOpacity: selectedMuniId === m.id ? 0.15 : 0.04,
+                dashArray: selectedMuniId === m.id ? '0' : '4 6'
               }}
             />
           ))}
 
-          {businesses.filter(b => currentFilter === 'all' || b.cat === currentFilter).map(biz => (
+          {businesses.filter(b => 
+            (currentFilter === 'all' || b.cat === currentFilter) && 
+            typeof b.lat === 'number' && !isNaN(b.lat) && 
+            typeof b.lng === 'number' && !isNaN(b.lng)
+          ).map(biz => (
             <Marker 
               key={biz.id} 
               position={[biz.lat, biz.lng]} 
@@ -402,9 +486,14 @@ export default function App() {
           onClick={() => {
             if (navigator.geolocation) {
               navigator.geolocation.getCurrentPosition(pos => {
-                setMapCenter([pos.coords.latitude, pos.coords.longitude]);
-                setMapZoom(15);
-                showToast('📍 Centered to your location');
+                const { latitude, longitude } = pos.coords;
+                if (typeof latitude === 'number' && !isNaN(latitude) && typeof longitude === 'number' && !isNaN(longitude)) {
+                  setMapCenter([latitude, longitude]);
+                  setMapZoom(15);
+                  showToast('📍 Centered to your location');
+                } else {
+                  showToast('⚠️ Could not determine precise location');
+                }
               }, () => showToast('⚠️ Location access denied'));
             }
           }}
@@ -562,9 +651,13 @@ export default function App() {
                           key={biz.id} 
                           className="flex items-center gap-4 px-5 py-4 border-b border-white/5 hover:bg-white/5 cursor-pointer transition-colors"
                           onClick={() => {
-                            setMapCenter([biz.lat, biz.lng]);
-                            setMapZoom(16);
-                            setActivePanel(null);
+                            if (typeof biz.lat === 'number' && !isNaN(biz.lat) && typeof biz.lng === 'number' && !isNaN(biz.lng)) {
+                              setMapCenter([biz.lat, biz.lng]);
+                              setMapZoom(16);
+                              setActivePanel(null);
+                            } else {
+                              showToast('⚠️ Business location is invalid');
+                            }
                           }}
                         >
                           <div className="w-10 h-10 rounded-xl flex items-center justify-center text-lg bg-white/5 border border-white/10" style={{ borderColor: `${CAT_COLORS[biz.cat]}33`, color: CAT_COLORS[biz.cat] }}>
@@ -594,11 +687,7 @@ export default function App() {
                       <div key={m.id} className="bg-white/5 border border-white/5 rounded-2xl overflow-hidden">
                         <div 
                           className="flex items-center gap-4 p-4 cursor-pointer hover:bg-white/5 transition-colors"
-                          onClick={() => {
-                            setMapCenter([m.lat, m.lng]);
-                            setMapZoom(m.zoom);
-                            setActivePanel(null);
-                          }}
+                          onClick={() => handleMuniClick(m)}
                         >
                           <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-white/10 to-transparent border border-white/10 flex items-center justify-center text-xl">
                             {m.icon}
@@ -611,11 +700,7 @@ export default function App() {
                         </div>
                         <div className="flex gap-2 p-3 pt-0">
                           <button 
-                            onClick={() => {
-                              setMapCenter([m.lat, m.lng]);
-                              setMapZoom(m.zoom);
-                              setActivePanel(null);
-                            }}
+                            onClick={() => handleMuniClick(m)}
                             className="flex-1 py-2 rounded-lg border border-white/10 text-[9px] font-light tracking-widest uppercase text-white/60 hover:text-[#4fc3f7] hover:border-[#4fc3f7] transition-all"
                           >
                             Explore
@@ -643,6 +728,16 @@ export default function App() {
                     <div className="text-[11px] font-extralight tracking-[4px] uppercase text-white/40">Offline Maps</div>
                     <button onClick={() => setActivePanel(null)} className="p-1.5 rounded-full bg-white/5"><X size={14} /></button>
                   </div>
+                  <div className="bg-[#4fc3f7]/5 border border-[#4fc3f7]/10 rounded-2xl p-4 mb-6 flex items-center justify-between">
+                    <div>
+                      <div className="text-[10px] font-light tracking-[2px] uppercase text-[#4fc3f7]/60 mb-1">Storage Used</div>
+                      <div className="text-[16px] font-light text-[#4fc3f7]">{cacheInfo.split('(')[1]?.replace(')', '') || '0.0 MB'}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-[10px] font-light tracking-[2px] uppercase text-white/20 mb-1">Total Tiles</div>
+                      <div className="text-[16px] font-light text-white/40">{cacheInfo.split(' ')[0] || '0'}</div>
+                    </div>
+                  </div>
                   <p className="text-[11px] font-extralight text-white/40 leading-relaxed tracking-wide mb-6">
                     Download map tiles for each municipality to use WeMap without internet connection. Tiles are stored on your device.
                   </p>
@@ -664,8 +759,7 @@ export default function App() {
                             disabled={!!downloadingId}
                             onClick={() => {
                               if (isCached) {
-                                setCachedMunis(cachedMunis.filter(id => id !== m.id));
-                                showToast(`🗑️ ${m.name} cache removed`);
+                                deleteMuniCache(m);
                               } else {
                                 downloadMuni(m);
                               }
@@ -703,11 +797,43 @@ export default function App() {
                   <div className="space-y-1">
                     <div className="flex items-center justify-between py-4 border-b border-white/5">
                       <div>
-                        <div className="text-[14px] font-light">Map Style</div>
-                        <div className="text-[10px] font-extralight text-white/40 mt-0.5 tracking-wider">Night Mode — OpenStreetMap</div>
+                        <div className="text-[14px] font-light">Night Mode</div>
+                        <div className="text-[10px] font-extralight text-white/40 mt-0.5 tracking-wider">Invert map colors for low light</div>
                       </div>
-                      <div className="w-2 h-2 rounded-full bg-[#4fc3f7] shadow-[0_0_8px_#4fc3f7]" />
+                      <button 
+                        onClick={() => setIsNightMode(!isNightMode)}
+                        className={`w-10 h-5 rounded-full relative transition-colors ${isNightMode ? 'bg-[#4fc3f7]' : 'bg-white/10'}`}
+                      >
+                        <motion.div 
+                          className="absolute top-1 left-1 w-3 h-3 rounded-full bg-white"
+                          animate={{ x: isNightMode ? 20 : 0 }}
+                          transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                        />
+                      </button>
                     </div>
+
+                    <div className="py-4 border-b border-white/5">
+                      <div className="flex justify-between items-center mb-3">
+                        <div>
+                          <div className="text-[14px] font-light">Map Brightness</div>
+                          <div className="text-[10px] font-extralight text-white/40 mt-0.5 tracking-wider">Adjust light levels</div>
+                        </div>
+                        <div className="text-[12px] font-light text-[#4fc3f7]">{mapBrightness}%</div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <Sun size={14} className="text-white/20" />
+                        <input 
+                          type="range" 
+                          min="50" 
+                          max="150" 
+                          value={mapBrightness} 
+                          onChange={(e) => setMapBrightness(parseInt(e.target.value))}
+                          className="flex-1 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-[#4fc3f7]"
+                        />
+                        <Sun size={18} className="text-white/60" />
+                      </div>
+                    </div>
+
                     <div className="flex items-center justify-between py-4 border-b border-white/5">
                       <div>
                         <div className="text-[14px] font-light">Cache Size</div>
